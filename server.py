@@ -64,18 +64,13 @@ RATE_LIMITS = {
 }
 
 # ============================================
-# FIXED: Create admin users on startup
+# Create sample users on startup
 # ============================================
-def create_admin_users():
-    """Create admin users if they don't exist"""
-    # Admin 1: Backend Developer
-    admin1_exists = False
-    for user in users_db.values():
-        if user.get('email') == 'backend@uptorps.com':
-            admin1_exists = True
-            break
+def create_sample_users():
+    """Create sample users if they don't exist"""
     
-    if not admin1_exists:
+    # Admin 1: Backend Developer
+    if not any(user.get('email') == 'backend@uptorps.com' for user in users_db.values()):
         admin1_uuid = str(uuid.uuid4())
         users_db[admin1_uuid] = {
             'uuid': admin1_uuid,
@@ -96,13 +91,7 @@ def create_admin_users():
         logger.info("✅ Admin created: backend@uptorps.com / Admin123!@#")
     
     # Admin 2: Manager
-    admin2_exists = False
-    for user in users_db.values():
-        if user.get('email') == 'admin@uptorps.com':
-            admin2_exists = True
-            break
-    
-    if not admin2_exists:
+    if not any(user.get('email') == 'admin@uptorps.com' for user in users_db.values()):
         admin2_uuid = str(uuid.uuid4())
         users_db[admin2_uuid] = {
             'uuid': admin2_uuid,
@@ -122,17 +111,32 @@ def create_admin_users():
         }
         logger.info("✅ Admin created: admin@uptorps.com / Admin123!@#")
     
-    # Regular user
-    user_exists = False
-    for user in users_db.values():
-        if user.get('email') == 'student@example.com':
-            user_exists = True
-            break
+    # ===== NEW: Tutor User =====
+    if not any(user.get('email') == 'tutor@uptorps.com' for user in users_db.values()):
+        tutor_uuid = str(uuid.uuid4())
+        users_db[tutor_uuid] = {
+            'uuid': tutor_uuid,
+            'email': 'tutor@uptorps.com',
+            'username': 'tutor01',
+            'password': generate_password_hash('Tutor123!@#'),
+            'first_name': 'Tutor',
+            'last_name': 'User',
+            'role': 'Tutor',  # Tutor role
+            'admin_type': None,
+            'dev_specialization': None,
+            'is_active': True,
+            'email_verified': True,
+            'date_joined': datetime.datetime.utcnow().isoformat() + 'Z',
+            'wallet_state': 'ACTIVE',
+            'wallet_balance': 750.50
+        }
+        logger.info("✅ Tutor created: tutor@uptorps.com / Tutor123!@#")
     
-    if not user_exists:
-        user_uuid = str(uuid.uuid4())
-        users_db[user_uuid] = {
-            'uuid': user_uuid,
+    # Regular student
+    if not any(user.get('email') == 'student@example.com' for user in users_db.values()):
+        student_uuid = str(uuid.uuid4())
+        users_db[student_uuid] = {
+            'uuid': student_uuid,
             'email': 'student@example.com',
             'username': 'student1',
             'password': generate_password_hash('Student123!@#'),
@@ -147,13 +151,13 @@ def create_admin_users():
             'wallet_state': 'ACTIVE',
             'wallet_balance': 450.75
         }
-        logger.info("✅ Regular user created: student@example.com / Student123!@#")
+        logger.info("✅ Student created: student@example.com / Student123!@#")
 
 # Create users immediately
-create_admin_users()
+create_sample_users()
 
 # ============================================
-# DEBUG ENDPOINTS - Fixed variable naming
+# DEBUG ENDPOINTS
 # ============================================
 
 @app.route('/api/debug/status', methods=['GET'])
@@ -164,44 +168,6 @@ def debug_status():
         'users_in_db': len(users_db),
         'timestamp': datetime.datetime.utcnow().isoformat()
     })
-
-@app.route('/api/debug/create-admin', methods=['GET'])
-def debug_create_admin():
-    """Force create admin user - FIXED variable naming"""
-    try:
-        # Use a different variable name to avoid conflict with uuid module
-        new_admin_uuid = str(uuid.uuid4())
-        users_db[new_admin_uuid] = {
-            'uuid': new_admin_uuid,
-            'email': 'backend@uptorps.com',
-            'username': 'backenddev',
-            'password': generate_password_hash('Admin123!@#'),
-            'first_name': 'Backend',
-            'last_name': 'Developer',
-            'role': 'Admin',
-            'admin_type': 'Developer',
-            'dev_specialization': 'Backend',
-            'is_active': True,
-            'email_verified': True,
-            'date_joined': datetime.datetime.utcnow().isoformat() + 'Z',
-            'wallet_state': 'ACTIVE',
-            'wallet_balance': 1000
-        }
-        
-        logger.info("✅ Admin created via debug endpoint")
-        
-        return jsonify({
-            'message': 'Admin created successfully',
-            'email': 'backend@uptorps.com',
-            'password': 'Admin123!@#',
-            'uuid': new_admin_uuid
-        })
-    except Exception as e:
-        logger.error(f"❌ Error creating admin: {str(e)}")
-        return jsonify({
-            'error': str(e),
-            'message': 'Failed to create admin'
-        }), 500
 
 @app.route('/api/debug/users', methods=['GET'])
 def debug_users():
@@ -461,6 +427,35 @@ def admin_required(f):
     
     return decorated
 
+def tutor_required(f):
+    """Decorator to require tutor role"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth_header = request.headers.get('Authorization', '')
+        
+        if not auth_header.startswith('Bearer '):
+            return jsonify({'detail': 'Authentication required'}), 401
+        
+        token = auth_header.replace('Bearer ', '')
+        
+        try:
+            payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+            user = users_db.get(payload['user_uuid'])
+            
+            if not user or user.get('role') not in ['Tutor', 'Admin']:
+                return jsonify({'detail': 'Tutor access required'}), 403
+            
+            request.user_uuid = payload['user_uuid']
+            request.user = user
+        except jwt.ExpiredSignatureError:
+            return jsonify({'detail': 'Token has expired'}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({'detail': 'Invalid token'}), 401
+        
+        return f(*args, **kwargs)
+    
+    return decorated
+
 def backend_dev_required(f):
     """Decorator to require backend developer role"""
     @wraps(f)
@@ -498,11 +493,7 @@ def home():
         'message': 'Uptorps API is running!',
         'version': '1.0.0',
         'status': 'online',
-        'users_in_db': len(users_db),
-        'admins': [
-            'backend@uptorps.com',
-            'admin@uptorps.com'
-        ]
+        'users_in_db': len(users_db)
     })
 
 @app.route('/api/health', methods=['GET'])
@@ -562,7 +553,7 @@ def register():
         'password': generate_password_hash(data['password']),
         'first_name': data.get('first_name', ''),
         'last_name': data.get('last_name', ''),
-        'role': 'Student',
+        'role': 'Student',  # Default role is Student
         'admin_type': None,
         'dev_specialization': None,
         'is_active': False,
@@ -628,7 +619,7 @@ def login():
     
     logger.info(f"User logged in: {user['email']} (Role: {user['role']})")
     
-    # Return full user data including admin fields
+    # Return full user data
     return jsonify({
         'access': access_token,
         'refresh': refresh_token,
@@ -879,7 +870,7 @@ def user_info(user_uuid):
         
         for field in editable_fields:
             if field in data:
-                if field == 'role' and data['role'] not in ['Student', 'Admin']:
+                if field == 'role' and data['role'] not in ['Student', 'Tutor', 'Admin']:
                     continue
                 if field == 'admin_type' and data.get('admin_type') not in [None, 'Manager', 'Developer']:
                     continue
@@ -960,6 +951,10 @@ logger.info(f"📧 Email From: {SENDER_EMAIL}")
 logger.info("👑 Admin Users:")
 logger.info("   - backend@uptorps.com / Admin123!@# (Developer - Backend)")
 logger.info("   - admin@uptorps.com / Admin123!@# (Manager)")
+logger.info("🧑‍🏫 Tutor User:")
+logger.info("   - tutor@uptorps.com / Tutor123!@#")
+logger.info("🧑 Student User:")
+logger.info("   - student@example.com / Student123!@#")
 logger.info(f"📊 Total Users: {len(users_db)}")
 logger.info("="*60 + "\n")
 
