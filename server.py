@@ -124,7 +124,7 @@ def send_verification_email(email, username, token):
     
     try:
         params = {
-            "from": "Uptorps <noreply@uptorps.com>",  # Update with your verified domain
+            "from": "onboarding@resend.dev",  # Update with your verified domain
             "to": [email],
             "subject": "Verify your email for Uptorps",
             "html": f"""
