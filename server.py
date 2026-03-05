@@ -27,7 +27,7 @@ CORS(app, origins=[
     'http://localhost:3000',
     'http://localhost:5173',
     'http://localhost:5000',
-    'https://your-frontend-domain.com'  # Change to your actual frontend URL
+    'https://your-frontend-domain.com'
 ])
 
 # Configure Resend for email
@@ -66,7 +66,7 @@ RATE_LIMITS = {
 }
 
 # ============================================
-# DEBUG ENDPOINTS - Add these at the TOP of your routes
+# DEBUG ENDPOINTS - Add these at the TOP
 # ============================================
 
 @app.route('/api/debug/status', methods=['GET'])
@@ -83,21 +83,14 @@ def debug_create_admin():
     """Force create admin user"""
     try:
         # Check if admin already exists
-        admin_exists = False
-        admin_uuid = None
-        for uuid, user in users_db.items():
+        for user in users_db.values():
             if user.get('email') == 'backend@uptorps.com':
-                admin_exists = True
-                admin_uuid = uuid
-                break
-        
-        if admin_exists:
-            return jsonify({
-                'message': 'Admin already exists',
-                'email': 'backend@uptorps.com',
-                'password': 'Admin123!@#',
-                'uuid': admin_uuid
-            })
+                return jsonify({
+                    'message': 'Admin already exists',
+                    'email': 'backend@uptorps.com',
+                    'password': 'Admin123!@#',
+                    'user': user
+                })
         
         # Create backend developer admin
         backend_dev_uuid = str(uuid.uuid4())
@@ -202,7 +195,9 @@ def debug_login_test():
             'message': 'Password correct',
             'user': {
                 'email': user['email'],
-                'role': user['role']
+                'role': user['role'],
+                'admin_type': user.get('admin_type'),
+                'dev_specialization': user.get('dev_specialization')
             }
         })
     else:
@@ -210,6 +205,71 @@ def debug_login_test():
             'success': False,
             'message': 'Password incorrect'
         }), 401
+
+# ============================================
+# Initialize sample data on startup
+# ============================================
+def init_sample_data():
+    """Initialize sample data for testing"""
+    # Check if admin already exists
+    admin_exists = False
+    for user in users_db.values():
+        if user.get('email') == 'backend@uptorps.com':
+            admin_exists = True
+            break
+    
+    if not admin_exists:
+        # Create a backend developer admin
+        backend_dev_uuid = str(uuid.uuid4())
+        users_db[backend_dev_uuid] = {
+            'uuid': backend_dev_uuid,
+            'email': 'backend@uptorps.com',
+            'username': 'backenddev',
+            'password': generate_password_hash('Admin123!@#'),
+            'first_name': 'Backend',
+            'last_name': 'Developer',
+            'role': 'Admin',
+            'admin_type': 'Developer',
+            'dev_specialization': 'Backend',
+            'is_active': True,
+            'email_verified': True,
+            'date_joined': datetime.datetime.utcnow().isoformat() + 'Z',
+            'wallet_state': 'ACTIVE',
+            'wallet_balance': 1000
+        }
+        logger.info("✅ Admin created: backend@uptorps.com / Admin123!@#")
+    
+    # Check if regular user exists
+    user_exists = False
+    for user in users_db.values():
+        if user.get('email') == 'student@example.com':
+            user_exists = True
+            break
+    
+    if not user_exists:
+        # Create a regular user
+        user_uuid = str(uuid.uuid4())
+        users_db[user_uuid] = {
+            'uuid': user_uuid,
+            'email': 'student@example.com',
+            'username': 'student1',
+            'password': generate_password_hash('Student123!@#'),
+            'first_name': 'John',
+            'last_name': 'Doe',
+            'role': 'Student',
+            'admin_type': None,
+            'dev_specialization': None,
+            'is_active': True,
+            'email_verified': True,
+            'date_joined': datetime.datetime.utcnow().isoformat() + 'Z',
+            'wallet_state': 'ACTIVE',
+            'wallet_balance': 450.75
+        }
+        logger.info("✅ Regular user created: student@example.com / Student123!@#")
+
+# Call this immediately
+init_sample_data()
+logger.info(f"📊 Total users in database: {len(users_db)}")
 
 def generate_tokens(user_uuid):
     """Generate access and refresh tokens"""
@@ -484,6 +544,7 @@ def home():
         'message': 'Uptorps API is running with FREE email!',
         'version': '1.0.0',
         'status': 'online',
+        'users_in_db': len(users_db),
         'debug_endpoints': [
             '/api/debug/status',
             '/api/debug/users',
@@ -987,8 +1048,15 @@ def user_info(user_uuid):
         
         return jsonify({'detail': 'User updated successfully'}), 200
 
-# ============================================
-# Run the app
-# ============================================
+# Print startup info
+logger.info("\n" + "="*60)
+logger.info("🚀 Uptorps API Server Started!")
+logger.info(f"📍 Environment: {'Production' if os.getenv('RENDER') else 'Development'}")
+logger.info(f"📧 Email From: {SENDER_EMAIL}")
+logger.info(f"👤 Admin: backend@uptorps.com / Admin123!@#")
+logger.info(f"👤 Test User: student@example.com / Student123!@#")
+logger.info(f"📊 Total Users: {len(users_db)}")
+logger.info("="*60 + "\n")
+
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
