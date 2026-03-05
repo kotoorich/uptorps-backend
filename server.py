@@ -3,9 +3,10 @@ import jwt
 import uuid
 import re
 import datetime
+import logging
 from functools import wraps
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request, url_for
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 import resend
@@ -13,6 +14,10 @@ from email_validator import validate_email, EmailNotValidError
 
 # Load environment variables
 load_dotenv()
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('JWT_SECRET', 'dev-secret-key-change-in-production')
@@ -22,11 +27,21 @@ CORS(app, origins=[
     'http://localhost:3000',
     'http://localhost:5173',
     'http://localhost:5000',
-    'https://your-frontend-domain.com'  # Add your actual frontend domain
+    'https://your-frontend-domain.com'  # Change to your actual frontend URL
 ])
 
 # Configure Resend for email
-resend.api_key = os.getenv('RESEND_API_KEY')
+RESEND_API_KEY = os.getenv('RESEND_API_KEY')
+if not RESEND_API_KEY:
+    logger.warning("RESEND_API_KEY not set in environment variables")
+else:
+    resend.api_key = RESEND_API_KEY
+    logger.info("✅ Resend API key configured")
+
+# ============================================
+# FREE TEST DOMAIN - NO PAYMENT, NO DNS, NO VERIFICATION NEEDED!
+# ============================================
+SENDER_EMAIL = "onboarding@resend.dev"
 
 # JWT Configuration
 JWT_SECRET = os.getenv('JWT_SECRET', 'jwt-secret-key')
@@ -34,7 +49,7 @@ JWT_ALGORITHM = 'HS256'
 ACCESS_TOKEN_EXPIRE_MINUTES = 15
 REFRESH_TOKEN_EXPIRE_DAYS = 1
 
-# Mock database (replace with real database in production)
+# Mock database (in production, use real database)
 users_db = {}
 refresh_tokens_db = {}
 rate_limit_db = {}
@@ -118,13 +133,17 @@ def check_rate_limit(identifier, limit_type):
     return True, 0
 
 def send_verification_email(email, username, token):
-    """Send email verification link using Resend"""
+    """Send email verification link using Resend's FREE test domain"""
     frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173')
     verification_link = f"{frontend_url}/auth?mode=verify&token={token}"
     
+    logger.info(f"📧 Attempting to send FREE verification email to: {email}")
+    logger.info(f"🔗 Verification link: {verification_link}")
+    
     try:
         params = {
-            "from": "onboarding@resend.dev",  # Update with your verified domain
+            # USING RESEND'S FREE TEST DOMAIN - NO VERIFICATION NEEDED!
+            "from": f"Uptorps <{SENDER_EMAIL}>",
             "to": [email],
             "subject": "Verify your email for Uptorps",
             "html": f"""
@@ -163,20 +182,24 @@ def send_verification_email(email, username, token):
         }
         
         email_response = resend.Emails.send(params)
-        print(f"Email sent successfully: {email_response}")
+        logger.info(f"✅ Email sent successfully! Response ID: {email_response.get('id')}")
         return True
+        
     except Exception as e:
-        print(f"Failed to send email: {str(e)}")
+        logger.error(f"❌ Failed to send email: {str(e)}")
+        logger.error(f"Error type: {type(e).__name__}")
         return False
 
 def send_password_reset_email(email, username, token):
-    """Send password reset email"""
+    """Send password reset email using Resend's FREE test domain"""
     frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173')
     reset_link = f"{frontend_url}/auth?mode=reset&token={token}"
     
+    logger.info(f"📧 Sending FREE password reset email to: {email}")
+    
     try:
         params = {
-            "from": "Uptorps <noreply@uptorps.com>",
+            "from": f"Uptorps <{SENDER_EMAIL}>",
             "to": [email],
             "subject": "Reset your Uptorps password",
             "html": f"""
@@ -217,10 +240,11 @@ def send_password_reset_email(email, username, token):
         }
         
         email_response = resend.Emails.send(params)
-        print(f"Password reset email sent successfully: {email_response}")
+        logger.info(f"✅ Password reset email sent! Response ID: {email_response.get('id')}")
         return True
+        
     except Exception as e:
-        print(f"Failed to send password reset email: {str(e)}")
+        logger.error(f"❌ Failed to send password reset email: {str(e)}")
         return False
 
 def token_required(f):
@@ -312,10 +336,10 @@ def backend_dev_required(f):
 @app.route('/', methods=['GET'])
 def home():
     return jsonify({
-        'message': 'Uptorps API is running!',
+        'message': 'Uptorps API is running with FREE email!',
         'version': '1.0.0',
-        'documentation': 'See your API documentation for details',
-        'status': 'online'
+        'status': 'online',
+        'email_status': '✅ Using Resend FREE test domain - No payment needed!'
     })
 
 @app.route('/api/health', methods=['GET'])
@@ -396,12 +420,10 @@ def register():
         'type': 'email_verification'
     }, JWT_SECRET, algorithm=JWT_ALGORITHM)
     
-    # Send verification email
+    # Send verification email (FREE!)
     email_sent = send_verification_email(data['email'], data['username'], verification_token)
     
-    if not email_sent:
-        # Log but don't fail - user can request resend
-        print(f"Warning: Failed to send verification email to {data['email']}")
+    logger.info(f"User registered: {data['email']}, Email sent: {email_sent}")
     
     return jsonify({
         'message': 'User created',
@@ -434,6 +456,8 @@ def verify_email():
         # Verify email
         user['email_verified'] = True
         user['is_active'] = True
+        
+        logger.info(f"Email verified for user: {user['email']}")
         
         return jsonify({'detail': 'Email verified successfully'}), 200
         
@@ -474,7 +498,7 @@ def resend_verification():
         'type': 'email_verification'
     }, JWT_SECRET, algorithm=JWT_ALGORITHM)
     
-    # Send verification email
+    # Send verification email (FREE!)
     send_verification_email(user['email'], user['username'], verification_token)
     
     return jsonify({'detail': 'If the email exists, a verification link was sent.'}), 200
@@ -517,6 +541,8 @@ def login():
     
     # Generate tokens
     access_token, refresh_token = generate_tokens(user['uuid'])
+    
+    logger.info(f"User logged in: {user['email']}")
     
     return jsonify({
         'access': access_token,
@@ -641,6 +667,8 @@ def create_admin():
     
     users_db[user_uuid] = user_data
     
+    logger.info(f"Admin account created: {data['email']}")
+    
     return jsonify({
         'message': 'Admin account created successfully',
         'user_uuid': user_uuid
@@ -666,7 +694,8 @@ def delete_user(user_uuid):
         return jsonify({'detail': 'Admin cannot delete themselves'}), 400
     
     # Delete user
-    del users_db[user_uuid]
+    deleted_user = users_db.pop(user_uuid)
+    logger.info(f"User deleted: {deleted_user['email']}")
     
     return '', 204
 
@@ -702,7 +731,7 @@ def password_reset_request():
         'type': 'password_reset'
     }, JWT_SECRET, algorithm=JWT_ALGORITHM)
     
-    # Send password reset email
+    # Send password reset email (FREE!)
     send_password_reset_email(user['email'], user['username'], reset_token)
     
     return jsonify({'detail': 'If the email exists, a reset link was sent.'}), 200
@@ -734,6 +763,8 @@ def password_reset_confirm():
         
         # Update password
         user['password'] = generate_password_hash(data['new_password'])
+        
+        logger.info(f"Password reset for user: {user['email']}")
         
         return jsonify({'detail': 'Password reset successful'}), 200
         
@@ -802,6 +833,8 @@ def user_info(user_uuid):
                 
                 target_user[field] = data[field]
         
+        logger.info(f"User info updated: {target_user['email']}")
+        
         return jsonify({'detail': 'User updated successfully'}), 200
 
 # Initialize sample data for testing
@@ -846,17 +879,20 @@ def init_sample_data():
             'wallet_balance': 450.75
         }
         
-        print("✅ Sample data initialized!")
-        print("   Backend Developer: backend@uptorps.com / Admin123!@#")
-        print("   Regular User: student@example.com / Student123!@#")
+        logger.info("✅ Sample data initialized!")
+        logger.info("   Backend Developer: backend@uptorps.com / Admin123!@#")
+        logger.info("   Regular User: student@example.com / Student123!@#")
 
 if __name__ == '__main__':
     init_sample_data()
-    print("\n" + "="*50)
-    print("🚀 Uptorps API Server Starting...")
-    print(f"📍 Base URL: http://localhost:5000")
-    print("="*50 + "\n")
+    logger.info("\n" + "="*50)
+    logger.info("🚀 Uptorps API Server Starting with FREE Email!")
+    logger.info("📍 Base URL: http://localhost:5000")
+    logger.info("📧 Email From: onboarding@resend.dev (FREE - No domain needed!)")
+    logger.info("💯 100% FREE - No payments, no DNS, no verification!")
+    logger.info("="*50 + "\n")
     app.run(debug=True, port=5000)
 else:
-    # When running on Render, don't initialize sample data
-    print("🚀 Uptorps API Server started in production mode")
+    # When running on Render
+    logger.info("🚀 Uptorps API Server started in production mode with FREE email")
+    logger.info("📧 Email From: onboarding@resend.dev (FREE test domain)")
